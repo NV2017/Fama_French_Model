@@ -1,0 +1,204 @@
+---
+title: "Fama_French_RMD"
+author: "Arunabha"
+date: "3 August 2019"
+output: html_document
+runtime: shiny
+---
+
+
+### **Introduction: Fama-French Asset Pricing Model**
+
+Originally [published in early 1992](https://doi.org/10.1111/j.1540-6261.1992.tb04398.x) by **Eugene F. Fama** and **Kenneth F. French**, this is a 3 factor asset pricing model aiming to improve over the Capital Asset Pricing model (CAPM). At its core, it retains the simplicity and calculations involved. In addition to CAPM's market risk, Fama-French incorporates two additional risk parameters of 'value risk' and 'size risk'. The 'value risk' component captures the the present underpricing/overpricing of the asset, akin to many technical analysis. The 'size risk' component accounts for the fact that smaller companies tend to outpace growth of larger companies as their business have a wider possible market to capture. All these three combine together in a linear regression. The statistics of this regression reveal the relative importance of each of the 3-factors for any selected portfolio. For this assignment, we investigate how significant each of the component is.
+
+The equation behind the Fama-French linear regression model is depicted as follows:
+
+If the p-value is equal or smaller than the significance level $\alpha$
+
+### R~it~ - R~ft~ = $\alpha$~it~ + $\beta$~1~(R~Mt~-R~ft~) + $\beta$~2~(SMB~t~) + $\beta$~3~(HML~t~) + $\epsilon$~it~
+
+<br>.    Where:
+<br>.          R~it~: total return of a stock or portfolio, i at time t
+<br>.          R~ft~: risk free rate of return at time t
+<br>.          R~Mt~: total market portfolio return at time tl
+<br>.          R~it~-R~ft~: expected excess return
+<br>.          R~Mt~-R~ft~: excess return on the market portfolio (index)
+<br>.          SMB~t~: size premium (small minus big)
+<br>.          HML~t~: value premium (high minus low)
+<br>.          $\alpha$~it~, $\beta$~1~, $\beta$~2~, $\beta$~3~ are the regression coefficients
+<br>.          $\epsilon$~it~ is the regression error terms
+<br>
+
+Fama-French model, commonly revognised as a monumental improvement over CAPM model, it is obviously not without its limitations and criticism. To improve upon its limitations, additional parameters like momentum, quality, low volatility, etc have been added and tested. Original authors **Eugene F. Fama** and **Kenneth F. French** have expanded their models to 5 factors in a [2014 publication](https://dx.doi.org/10.2139/ssrn.2287202). For reasons beyond the scope of undestanding of this model, at certain times in history some of the risk premia have exhibited reverse effects. Like for example, smaller firms outperformed larger ones for extended period in 1930s, 1940s, 1970s and post 2000 in the US markets. This is amply captured by the 'size risk' component of the model. However, in the decades 1950s and 1980s, the complete opposite opposite is [observed](http://finance.wharton.upenn.edu/~keim/research/NewPalgraveAnomalies(May302006).pdf). Thus, it is important to look before you leap into investing in a financial model.
+
+
+### **Modelling of the Fama-French 3-factor model**
+
+For this demo, we shall primarily use well known ETFs in our weighted average portfolio. As these ETFs are well known, there representative SMB and HML are readily available from **Kenneth F. French's** [website](http://mba.tuck.dartmouth.edu/pages/faculty/ken.french/) courtesy Bloomberg and ETF time series data from **Yahoo Finance**. 
+<br>
+<br>
+First we load the necessary libraries, install only if required.
+```{r setup, include=T, message=FALSE, warning=FALSE}
+rm(list=ls())
+knitr::opts_chunk$set(echo = TRUE)
+libraries_required = c('tidyquant', 'tidyverse', 'timetk', 'broom', 'dplyr', 'treemap')
+
+for(i in seq(libraries_required))
+{
+  if(!(libraries_required[i] %in% rownames(installed.packages())))
+  {
+    try(expr = install.packages('libraries_required[i]'), silent = T)
+  }
+  try(expr = library(libraries_required[i], character.only = T), silent = T)
+}
+options("getSymbols.warning4.0"=FALSE)
+options(warn=-1)
+```
+
+<br>
+Next we select assets ant their respective weights in our portfolio.
+<br>
+For this demo, we choose from 5 ETFs: SPY, DIA, EFA, MDY, IJS, SCJ, EEM, ADRE, AGG, SCHZ. First 3 with equal weights of 20 % each, next ones with 30% and 10% sequentially.
+<br>
+By choosing across different ETF classes/categories, we try to achive a global diversification.
+<br>
+SPY & DIA ETF mirror S&P500 (mostly US based). We pick one of the two.
+<br>
+EFA & MDY ETF indexes mirror large and mid-cap developed market equities, excluding the U.S. and Canada. We pick one of the two.
+<br>
+IJS & SCJ ETF indexes are composed of small-capitalization U.S. equities that exhibit value characteristics. We pick one of the two.
+<br>
+EEM & ADRE ETF indexes are composed of large- and mid-capitalization emerging market equities. We pick one of the two.
+<br>
+AGG & SCHZ ET indexes are composed of the total U.S. investment-grade bond market. We pick one of the two.
+
+
+```{r children_1, echo=TRUE}
+c("DIA","MDY", "SCJ", "ADRE","SCHZ") -> ETFs
+c(0.20, 0.20, 0.20, 0.30, 0.10) -> Weights_of_Assets 
+
+getSymbols(ETFs, src = 'yahoo', from = "2011-01-01", to = "2018-12-31",
+  auto.assign = TRUE, warnings = FALSE) %>%                # Getting basic data as a tibble
+  map(~Ad(get(.))) %>%                                     # Getting adjusted closing price
+  reduce(merge) %>%                                        # Reducing list into single dataframe
+  `colnames<-`(ETFs) %>%                                   # Renaming column headers as ETF names
+  to.monthly(indexAt = "lastof", OHLC = FALSE) %>%         # Converting time series to monthly
+  tk_tbl(preserve_index = TRUE, rename_index = "Date") %>% # Converting to tibble time series
+  gather(asset, returns, -Date) %>%                        # Collapsing with key = ETF assets, value = - date for inverting the time series
+  group_by(asset) %>%                                      # Grouping entire tibble based on ETF assets
+  mutate(returns = (log(returns) - log(lag(returns)))) %>% # Calculating log returns of 1 month period
+  na.omit() %>%                                            # Removing NA
+  tq_portfolio(assets_col  = asset, returns_col = returns, # Making a portfolio of ETF assets
+    weights = Weights_of_Assets, col_rename  = "returns",  # Finally storing in the next line
+    rebalance_on = "months") -> Monthly_Log_Porrtfolio_Log_Returns
+
+```
+
+<br>
+To get an idea of the weights of the assets, we use treemap and pie chart to visualize.
+
+```{r children_2, echo=TRUE}
+
+
+renderPlot({
+  Asset_Weight <- c(0.20, 0.20, 0.20, 0.30, 0.10)
+  Asset_Names <- c("DIA","MDY", "SCJ", "ADRE","SCHZ")
+  
+  df_tree <- data.frame(Asset_Names,Asset_Weight,stringsAsFactors = F)
+  
+  treemap(dtf=df_tree,index='Asset_Names',vSize ='Asset_Weight',fontsize.title = 30,   fontsize.labels=c(16, 16), palette='Purples',title='Portfolio Asset Distribution')
+})
+
+```
+
+```{r children_3, echo=TRUE}
+
+
+renderPlot({
+  Asset_Weight <- c(0.20, 0.20, 0.20, 0.30, 0.10)
+  Asset_Names <- c("DIA","MDY", "SCJ", "ADRE","SCHZ")
+  
+  df_tree <- data.frame(Asset_Names,Asset_Weight,stringsAsFactors = F)
+  
+  pie(df_tree[,2], labels = df_tree[,1], main='Portfolio Asset Distribution',
+      radius = 1)
+})
+```
+
+<br>
+We next download the data from the website but not onto hardrive, onto a temp R element itself.
+
+```{r children_4, echo=TRUE}
+temp <- tempfile() # Temporary R file, currently empty on this line
+
+"http://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Global_3_Factors_CSV.zip" %>% # URL with data
+  download.file(temp, quiet = TRUE) %>%               # Downloading the data into temp element
+  unz("Global_3_Factors.csv")                         # Unzipping the file
+
+
+read_csv(unz(temp, "Global_3_Factors.csv"), skip = 6,
+         col_types = cols(                            # Making sure the columns are of right data type
+           `Mkt-RF` = col_double(),
+           SMB = col_double(),
+           HML = col_double(),
+           RF = col_double())) %>%                    
+  rename(Date = X1) %>%                               # Renaming first column as 'Date'
+  mutate_at(vars(-Date), as.numeric) %>%              # Making sure other than 'Date', the rest are numeric
+  mutate(Date =
+    rollback(ymd(parse_date_time(Date, "%Y%m") + months(1)))) %>%# Changing Date column in Year & Month, 
+                                                                 # same order as our monthly portfolio returns
+                                                                 # Rollback ensures last fo the months is used, 
+                                                                 # exactly like our portfolio.
+  # Now, both FF_factors & portfolio returns use the last of the month for calculations
+  filter(Date >= 
+    first(Monthly_Log_Porrtfolio_Log_Returns$Date) & Date <= 
+    last(Monthly_Log_Porrtfolio_Log_Returns$Date))-> FF_3_Factors# Storing the data
+```
+
+<br>
+We now combine returns and the Fama French model Factors.
+
+```{r children_5, echo=TRUE}
+
+Monthly_Log_Porrtfolio_Log_Returns %>%       # Monthly return Data
+  left_join(FF_3_Factors, by = "Date") %>%   # Left joining with Date column of 'FF_3_Factors'
+  mutate(MKT_RF = FF_3_Factors$`Mkt-RF`/100, # Converting % to absolute value
+         SMB = FF_3_Factors$SMB/100,         # Converting % to absolute value
+         HML = FF_3_Factors$HML/100,         # Converting % to absolute value
+         RF = FF_3_Factors$RF/100,           # Converting % to absolute value, storing below
+         R_excess = round(returns - RF, 4)) -> Fama_French_Factors_And_portfolio_returns
+```
+
+<br>
+Next, and importantly at the heart of this modelling, we regress and plot the regression coefficients with 95% confidence interval.
+
+```{r children_6, echo=TRUE}
+
+Fama_French_Factors_And_portfolio_returns %>%                 # Input for regression & plot
+  do(model =  lm(R_excess ~ MKT_RF + SMB + HML, data = .)) %>%# Regression
+  tidy(model, conf.int = T, conf.level = .95) %>%             # Selecting 95% confidence range
+  mutate_if(is.numeric, funs(round(., 3))) %>%                # Rounding off till third decimal place.
+  select(-statistic) %>%                                      # Unselecting 'statistics'. For easier plotting
+  mutate_if(is.numeric, funs(round(., 3))) %>%                # Coercing into numeric and rounding-off if possible
+  filter(term != "(Intercept)") %>%                           # Excluding 'Intercept' column in plot
+  ggplot(aes(x = term, y = estimate, shape = term, color = term)) + 
+  geom_point() +                                              # Plotting main data
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high)) +     # Plotting error bars
+  labs(title = "Fama-French 3-Factor Coefficients for ETF Portfolio", # Labels, title, caption, etc
+       subtitle = "Please revise the theory before investing, PLEASE",
+       x = "",
+       y = "Regression Coefficient",
+       caption = "Data source: Fama French factor from website (Bloomberg data) and Yahoo Finance") +
+  theme_gray(15) +                                            # Using the grey theme, and zooming text a little
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption  = element_text(hjust = 0))
+```
+
+### **Conclusion**
+<br>
+We observe for the choosed portfolio and time of analysis, **'market risk'** had been more important than **'value risk'** and **'size risk'** components of 3-factor Fama-French model.
+
+```{r children_7, echo=TRUE}
+rm(list=ls())
+```
